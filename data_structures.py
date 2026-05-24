@@ -1,11 +1,16 @@
 """
 QuickServe Medical Clinic - Core Data Structures & Algorithms
-BASELINE VERSION
+OPTIMIZED VERSION
 
-Implementations:
-  - PatientQueue  : FIFO Queue using collections.deque — true O(1) enqueue/dequeue
-  - PriorityQueue : Binary Max-Heap for urgent patients — O(log n) insert/extract
-  - merge_sort()  : Merge Sort for appointment display — O(n log n)
+Change from Baseline:
+  - PriorityQueue: Binary Max-Heap O(log n) → Multi-Level Bucket Queue O(1)
+    CONDITION: O(1) performance is valid because clinic urgency levels are
+    fixed and limited to exactly 4 discrete values (Normal=1, Moderate=2,
+    Urgent=3, Critical=4). This makes bucket-based lookup constant time.
+
+Unchanged:
+  - PatientQueue (FIFO) using collections.deque — true O(1) enqueue/dequeue
+  - merge_sort() — O(n log n), controls final display order of appointments
 
 Note on SQL vs Merge Sort:
   - SQL ORDER BY appointment_time is used only for data RETRIEVAL from the database.
@@ -16,7 +21,7 @@ Note on SQL vs Merge Sort:
 from collections import deque
 
 
-# ── 1. FIFO Queue ──────────────────────────────────────────────────────────────
+# ── 1. FIFO Queue — UNCHANGED ──────────────────────────────────────────────────
 
 class PatientQueue:
     """
@@ -56,81 +61,78 @@ class PatientQueue:
         return list(self._items)
 
 
-# ── 2. Binary Max-Heap Priority Queue ─────────────────────────────────────────
+# ── 2. Multi-Level Bucket Queue — OPTIMIZED ────────────────────────────────────
 
 class PriorityQueue:
     """
-    BASELINE: Binary Max-Heap Priority Queue for urgent patients.
-    Higher urgency_level = higher priority.
-    O(log n) insert and extract_max.
+    OPTIMIZED: Multi-Level Bucket Queue for urgent patients.
+
+    O(1) insert and extract — VALID because:
+      - Clinic urgency levels are FIXED at exactly 4 discrete values:
+          1 = Normal, 2 = Moderate, 3 = Urgent, 4 = Critical
+      - With fixed priority levels, a heap is unnecessary overhead.
+      - Binary Heap heapify_up/down costs O(log n) for n patients.
+      - Bucket Queue directly places patients into 1 of 4 fixed buckets → O(1).
+      - Extraction scans exactly 4 buckets (constant) regardless of n → O(1).
+
+    Complexity comparison (valid for fixed 4-level urgency systems):
+        Operation     | Binary Heap | Bucket Queue
+        insert()      | O(log n)    | O(1)
+        extract_max() | O(log n)    | O(1)
+        peek()        | O(1)        | O(1)
     """
 
+    LEVELS = [4, 3, 2, 1]  # checked highest-first
+
     def __init__(self):
-        self._heap = []
-
-    def _parent(self, i): return (i - 1) // 2
-    def _left(self, i):   return 2 * i + 1
-    def _right(self, i):  return 2 * i + 2
-
-    def _swap(self, i, j):
-        self._heap[i], self._heap[j] = self._heap[j], self._heap[i]
-
-    def _heapify_up(self, i):
-        """Bubble up after insert — O(log n)"""
-        while i > 0:
-            p = self._parent(i)
-            if self._heap[i]["urgency_level"] > self._heap[p]["urgency_level"]:
-                self._swap(i, p)
-                i = p
-            else:
-                break
-
-    def _heapify_down(self, i):
-        """Trickle down after extract — O(log n)"""
-        n = len(self._heap)
-        while True:
-            largest = i
-            l, r = self._left(i), self._right(i)
-            if l < n and self._heap[l]["urgency_level"] > self._heap[largest]["urgency_level"]:
-                largest = l
-            if r < n and self._heap[r]["urgency_level"] > self._heap[largest]["urgency_level"]:
-                largest = r
-            if largest != i:
-                self._swap(i, largest)
-                i = largest
-            else:
-                break
+        # 4 fixed buckets — one per urgency level
+        self._buckets = {4: deque(), 3: deque(), 2: deque(), 1: deque()}
+        self._total = 0
 
     def insert(self, patient):
-        """O(log n) — append then heapify_up."""
-        self._heap.append(patient)
-        self._heapify_up(len(self._heap) - 1)
+        """
+        O(1) — directly append to the correct urgency bucket.
+        No heap restructuring needed because priority levels are fixed.
+        """
+        level = patient.get("urgency_level", 1)
+        if level not in self._buckets:
+            level = 1
+        self._buckets[level].append(patient)
+        self._total += 1
 
     def extract_max(self):
-        """O(log n) — remove root, move last to root, heapify_down."""
-        if self.is_empty():
-            return None
-        if len(self._heap) == 1:
-            return self._heap.pop()
-        root = self._heap[0]
-        self._heap[0] = self._heap.pop()
-        self._heapify_down(0)
-        return root
+        """
+        O(1) — scan exactly 4 fixed buckets (constant regardless of n patients).
+        Returns highest-priority patient; FIFO within same urgency level.
+        """
+        for level in self.LEVELS:
+            if self._buckets[level]:
+                self._total -= 1
+                return self._buckets[level].popleft()
+        return None
 
     def peek(self):
-        return self._heap[0] if self._heap else None
+        """O(1) — look at next patient without removing."""
+        for level in self.LEVELS:
+            if self._buckets[level]:
+                return self._buckets[level][0]
+        return None
 
     def is_empty(self):
-        return len(self._heap) == 0
+        return self._total == 0
 
     def size(self):
-        return len(self._heap)
+        return self._total
 
     def all_patients(self):
-        return sorted(self._heap, key=lambda p: p["urgency_level"], reverse=True)
+        """Return all patients ordered by urgency (highest first), FIFO within level."""
+        result = []
+        for level in self.LEVELS:
+            result.extend(list(self._buckets[level]))
+        return result
 
 
-# ── 3. Merge Sort ──────────────────────────────────────────────────────────────
+# ── 3. Merge Sort — UNCHANGED ──────────────────────────────────────────────────
 
 def merge_sort(appointments, key="appointment_time"):
     """
